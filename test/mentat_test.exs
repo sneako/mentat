@@ -2,28 +2,49 @@ defmodule MentatTest do
   use ExUnit.Case
 
   setup do
-    start_supervised({Mentat, name: TestCache})
+    start_supervised!(%{id: TestCache, start: {Mentat, :start_link, [[name: TestCache]]}})
 
-    {:ok, cache: TestCache}
+    start_supervised!(%{
+      id: TestCacheBag,
+      start: {Mentat, :start_link, [[name: TestCacheBag, ets_args: [:bag]]]}
+    })
+
+    {:ok, cache: TestCache, bag_cache: TestCacheBag}
   end
 
-  test "stores data for a given ttl", %{cache: cache} do
-    assert Mentat.get(cache, :key) == nil
-    assert Mentat.put(cache, :key, "value", ttl: 20)
-    assert Mentat.get(cache, :key) == "value"
+  describe "stores data for a given ttl" do
+    test "set table", %{cache: cache} do
+      assert Mentat.get(cache, :key) == nil
+      assert Mentat.put(cache, :key, "value", ttl: 20)
+      assert Mentat.get(cache, :key) == "value"
 
-    :timer.sleep(30)
-    assert Mentat.get(cache, :key) == nil
-    assert Mentat.keys(cache, all: true) == [:key]
-    Mentat.remove_expired(cache)
-    assert Mentat.keys(cache, all: true) == []
+      :timer.sleep(30)
+      assert Mentat.get(cache, :key) == nil
+      assert Mentat.keys(cache, all: true) == [:key]
+      Mentat.remove_expired(cache)
+      assert Mentat.keys(cache, all: true) == []
+    end
+
+    test "bag table", %{bag_cache: cache} do
+      assert Mentat.get(cache, :key) == nil
+      assert Mentat.put(cache, :key, {"value", 1}, ttl: 20)
+      assert Mentat.put(cache, :key, {"value", 2}, ttl: 20)
+      assert Mentat.get(cache, :key) == [{"value", 1}, {"value", 2}]
+
+      :timer.sleep(30)
+      assert Mentat.get(cache, :key) == nil
+      assert Mentat.keys(cache, all: true) == [:key, :key]
+      Mentat.remove_expired(cache)
+      assert Mentat.keys(cache, all: true) == []
+    end
   end
 
   describe "fetch/2" do
     test "returns data it finds in cache", %{cache: cache} do
       assert Mentat.fetch(cache, :key, fn _ ->
-        {:commit, 3}
-      end) == 3
+               {:commit, 3}
+             end) == 3
+
       assert Mentat.fetch(cache, :key, fn _ -> {:commit, 4} end) == 3
       Mentat.purge(cache)
       assert Mentat.fetch(cache, :key, fn _ -> {:ignore, :error} end) == :error
@@ -39,6 +60,7 @@ defmodule MentatTest do
 
     test "does not call the fallback function when a nil is cached", %{cache: cache} do
       test_pid = self()
+
       fallback = fn _key ->
         send(test_pid, :called)
         {:commit, 42}

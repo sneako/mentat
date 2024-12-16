@@ -13,8 +13,8 @@ defmodule Mentat do
   @type key :: term()
   @type value :: term()
   @type put_opts :: [
-    {:ttl, pos_integer() | :infinity},
-  ]
+          {:ttl, pos_integer() | :infinity}
+        ]
 
   @default_limit %{reclaim: 0.1}
 
@@ -26,14 +26,17 @@ defmodule Mentat do
     coll_of(
       one_of([
         {:name, spec(is_atom)},
-        {:cleanup_interval, spec(is_integer and & &1 > 0)},
+        {:cleanup_interval, spec(is_integer and (&(&1 > 0)))},
         {:ets_args, spec(is_list)},
-        {:ttl, one_of([spec(is_integer and & &1 > 0), :infinity])},
+        {:ttl, one_of([spec(is_integer and (&(&1 > 0))), :infinity])},
         {:clock, spec(is_atom)},
-        {:limit, coll_of(one_of([
-          {:size, spec(is_integer and & &1 > 0)},
-          {:reclaim, spec(is_float)},
-        ]))}
+        {:limit,
+         coll_of(
+           one_of([
+             {:size, spec(is_integer and (&(&1 > 0)))},
+             {:reclaim, spec(is_float)}
+           ])
+         )}
       ])
     )
   end
@@ -45,7 +48,7 @@ defmodule Mentat do
     %{
       id: name,
       type: :supervisor,
-      start: {__MODULE__, :start_link, [opts]},
+      start: {__MODULE__, :start_link, [opts]}
     }
   end
 
@@ -92,7 +95,8 @@ defmodule Mentat do
   end)
   ```
   """
-  @spec fetch(name(), key(), put_opts(), (key() -> {:commit, value()} | {:ignore, value()})) :: value()
+  @spec fetch(name(), key(), put_opts(), (key() -> {:commit, value()} | {:ignore, value()})) ::
+          value()
   def fetch(cache, key, opts \\ [], fallback) do
     {status, value} = lookup(cache, key)
 
@@ -115,19 +119,19 @@ defmodule Mentat do
     value
   end
 
-
   @doc """
   Puts a new key into the cache. See the "TTLs" section for a list of
   options.
   """
   @spec put(name(), key(), value(), put_opts()) :: value() | no_return()
   @decorate pre("ttls are positive", fn _, _, _, opts ->
-    if opts[:ttl], do: opts[:ttl] > 0, else: true
-  end)
+              if opts[:ttl], do: opts[:ttl] > 0, else: true
+            end)
   @decorate post("value is returned", fn _, _, value, _, return ->
-    value == return
-  end)
+              value == return
+            end)
   def put(cache, key, value, opts \\ [])
+
   def put(cache, key, value, opts) do
     config = get_config(cache)
     :telemetry.execute([:mentat, :put], %{}, %{key: key, cache: cache})
@@ -162,7 +166,7 @@ defmodule Mentat do
   @spec touch(name(), key()) :: boolean()
   def touch(cache, key) do
     config = get_config(cache)
-    now    = ms_time(config.clock)
+    now = ms_time(config.clock)
     :ets.update_element(cache, key, {3, now})
   end
 
@@ -182,20 +186,21 @@ defmodule Mentat do
   """
   @spec keys(name()) :: [key()]
   def keys(cache, opts \\ []) do
-    ms = if opts[:all] == true do
-      [{{:"$1", :_, :_, :_}, [], [:"$1"]}]
-    else
-      config = get_config(cache)
-      now    = ms_time(config.clock)
-      [
-        {{:"$1", :_, :"$2", :"$3"},
-         [
-           {:orelse,
-            {:andalso, {:is_integer, :"$3"}, {:>, {:+, :"$2", :"$3"}, now}},
-            {:==, :"$3", :infinity}}
-         ], [:"$1"]}
-      ]
-    end
+    ms =
+      if opts[:all] == true do
+        [{{:"$1", :_, :_, :_}, [], [:"$1"]}]
+      else
+        config = get_config(cache)
+        now = ms_time(config.clock)
+
+        [
+          {{:"$1", :_, :"$2", :"$3"},
+           [
+             {:orelse, {:andalso, {:is_integer, :"$3"}, {:>, {:+, :"$2", :"$3"}, now}},
+              {:==, :"$3", :infinity}}
+           ], [:"$1"]}
+        ]
+      end
 
     :ets.select(cache, ms)
   end
@@ -211,13 +216,13 @@ defmodule Mentat do
   @doc false
   def remove_expired(cache) do
     config = get_config(cache)
-    now    = ms_time(config.clock)
+    now = ms_time(config.clock)
 
     # Find all expired keys by selecting the timestamp and ttl, adding them together
     # and finding the keys that are lower than the current time
     ms = [
-      {{:_, :_, :"$1", :"$2"},
-        [{:andalso, {:is_integer, :"$2"}, {:<, {:+, :"$1", :"$2"}, now}}], [true]}
+      {{:_, :_, :"$1", :"$2"}, [{:andalso, {:is_integer, :"$2"}, {:<, {:+, :"$1", :"$2"}, now}}],
+       [true]}
     ]
 
     :ets.select_delete(cache, ms)
@@ -240,16 +245,17 @@ defmodule Mentat do
   end
 
   def init(args) do
-    name     = args[:name]
+    name = args[:name]
+    type = args[:table_type] || :set
     interval = args[:cleanup_interval] || 5_000
-    limit    = args[:limit] || :none
-    limit    = if limit != :none, do: Map.merge(@default_limit, Map.new(limit)), else: limit
+    limit = args[:limit] || :none
+    limit = if limit != :none, do: Map.merge(@default_limit, Map.new(limit)), else: limit
     ets_args = args[:ets_args] || []
-    clock    = args[:clock] || System
-    ttl      = args[:ttl] || :infinity
-    ^name    = :ets.new(name, [:set, :named_table, :public] ++ ets_args)
+    clock = args[:clock] || System
+    ttl = args[:ttl] || :infinity
+    ^name = :ets.new(name, [type, :named_table, :public | ets_args])
 
-    put_config(name, %{limit: limit, ttl: ttl, clock: clock})
+    put_config(name, %{type: type, limit: limit, ttl: ttl, clock: clock})
 
     janitor_opts = [
       name: janitor(name),
@@ -270,18 +276,31 @@ defmodule Mentat do
 
   defp lookup(cache, key) do
     config = get_config(cache)
-    now    = ms_time(config.clock)
+    now = ms_time(config.clock)
 
     {status, value} =
       case :ets.lookup(cache, key) do
         [] -> {:miss, nil}
         [{^key, _val, ts, ttl}] when is_integer(ttl) and ts + ttl <= now -> {:miss, nil}
         [{^key, val, _ts, _expire_at}] -> {:hit, val}
+        [_ | _] = values -> valid_bag_values(values, now)
       end
 
     :telemetry.execute([:mentat, :get], %{status: status}, %{key: key, cache: cache})
 
     {status, value}
+  end
+
+  defp valid_bag_values(values, now) do
+    valid =
+      for {_key, val, expire_at, ttl} when expire_at + ttl >= now <- values do
+        val
+      end
+
+    case valid do
+      [_ | _] = vals -> {:hit, vals}
+      _ -> {:miss, nil}
+    end
   end
 
   defp put_config(cache, config) do

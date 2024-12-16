@@ -27,9 +27,11 @@ defmodule Mentat do
       one_of([
         {:name, spec(is_atom)},
         {:cleanup_interval, spec(is_integer and (&(&1 > 0)))},
+        {:min_reclaim_interval, spec(is_integer and (&(&1 > 0)))},
         {:ets_args, spec(is_list)},
         {:ttl, one_of([spec(is_integer and (&(&1 > 0))), :infinity])},
         {:clock, spec(is_atom)},
+        {:table_type, spec(is_atom)},
         {:limit,
          coll_of(
            one_of([
@@ -58,6 +60,7 @@ defmodule Mentat do
   Options:
   * `:name` - the cache name as an atom. required.
   * `:cleanup_interval` - How often the janitor process will remove old keys. Defaults to 5_000.
+  * `:min_reclaim_interval` - Minimum time that must pass between reclaims. Defaults to 0.
   * `:ets_args` - Additional arguments to pass to `:ets.new/2`.
   * `:ttl` - The default ttl for all keys. Default `:infinity`.
   * `:limit` - Limits to the number of keys a cache will store. Defaults to `:none`.
@@ -260,6 +263,8 @@ defmodule Mentat do
     janitor_opts = [
       name: janitor(name),
       interval: interval,
+      min_reclaim_interval:
+        System.convert_time_unit(args[:min_reclaim_interval] || 0, :millisecond, :native),
       cache: name
     ]
 

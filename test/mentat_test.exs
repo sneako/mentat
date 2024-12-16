@@ -6,7 +6,7 @@ defmodule MentatTest do
 
     start_supervised!(%{
       id: TestCacheBag,
-      start: {Mentat, :start_link, [[name: TestCacheBag, ets_args: [:bag]]]}
+      start: {Mentat, :start_link, [[name: TestCacheBag, table_type: :bag]]}
     })
 
     {:ok, cache: TestCache, bag_cache: TestCacheBag}
@@ -77,7 +77,15 @@ defmodule MentatTest do
   end
 
   describe "delete/2" do
-    test "removes the key from the cache", %{cache: cache} do
+    test "removes the key from the cache (set)", %{cache: cache} do
+      assert Mentat.put(cache, :key, "value") == "value"
+      assert Mentat.get(cache, :key) == "value"
+      assert Mentat.delete(cache, :key) == true
+      assert Mentat.get(cache, :key) == nil
+      assert Mentat.delete(cache, :key) == true
+    end
+
+    test "removes the key from the cache (bag)", %{bag_cache: cache} do
       assert Mentat.put(cache, :key, "value") == "value"
       assert Mentat.get(cache, :key) == "value"
       assert Mentat.delete(cache, :key) == true
@@ -131,10 +139,9 @@ defmodule MentatTest do
 
       for i <- 0..20 do
         Mentat.put(LimitCache, i, i)
+
         :timer.sleep(10)
       end
-
-      :timer.sleep(10)
 
       assert :ets.info(LimitCache, :size) == 10
       keys = Mentat.keys(LimitCache, all: true)
@@ -158,6 +165,38 @@ defmodule MentatTest do
       assert :ets.info(LimitCache, :size) == 6
       keys = Mentat.keys(LimitCache, all: true)
       assert Enum.sort(keys) == [5, 6, 7, 8, 9, 10]
+    end
+
+    test "will not perform a reclaim if min_reclaim_interval is configured higher than the elapsed time" do
+      stop_supervised(Mentat)
+
+      start_supervised!(
+        {Mentat, [name: LimitCache, limit: [size: 10, reclaim: 0.5], min_reclaim_interval: 30]}
+      )
+
+      for i <- 1..10 do
+        Mentat.put(LimitCache, i, i)
+        :timer.sleep(1)
+      end
+
+      assert :ets.info(LimitCache, :size) == 10
+
+      # Exceed the limit and sleep, but not long enough for a reclaim
+      :timer.sleep(5)
+      Mentat.put(LimitCache, 11, 11)
+      :timer.sleep(10)
+      assert :ets.info(LimitCache, :size) == 11
+
+      # wait long enough for reclaim
+      :timer.sleep(20)
+
+      # Exceed the limit and wait for items to be reclaimed
+      Mentat.put(LimitCache, 12, 12)
+      :timer.sleep(10)
+
+      assert :ets.info(LimitCache, :size) == 7
+      keys = Mentat.keys(LimitCache, all: true)
+      assert Enum.sort(keys) == Enum.into(6..12, [])
     end
   end
 
